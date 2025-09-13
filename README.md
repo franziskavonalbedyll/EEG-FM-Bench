@@ -41,6 +41,9 @@ Comprehensive evaluation of state-of-the-art EEG foundation models:
 - **CBraMod** - Criss-cross attention for spatio-temporal modeling
 - **EEGPT** - Dual self-supervised universal representation learning
 - **LaBraM** - Large brain model with vector quantization
+
+Additional classical model support:
+- **EEGNet** - Well-Known compact CNN for EEG
 - **EEGConformer** - Hybrid CNN-Transformer architecture for EEG analysis
 
 ### 📊 **Comprehensive Dataset Coverage**
