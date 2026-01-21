@@ -2,6 +2,7 @@ import logging
 from typing import Type
 
 from omegaconf import DictConfig, OmegaConf
+import hydra
 
 from common.config import PreprocArgs
 from common.log import setup_log
@@ -19,18 +20,18 @@ def prepare_dataset(
         dataset_name: str,
         config_name: str
 ):
-    try:
-        logger.info(f"Preparing dataset {dataset_name} {config_name}...")
-        builder = builder_cls(config_name)
-        if conf.clean_middle_cache:
-            builder.clean_disk_cache()
-        builder.preproc(n_proc=conf.num_preproc_mid_workers)
-        builder.download_and_prepare(num_proc=conf.num_preproc_arrow_writers)
-        dataset = builder.as_dataset()
-        logger.info(f"Dataset {dataset_name} {config_name} is prepared.")
-        logger.info(f"{dataset}")
-    except Exception as e:
-        logger.error(f"Preparation of dataset {dataset_name} {config_name} exit with error: {e}.")
+    # try:
+    logger.info(f"Preparing dataset {dataset_name} {config_name}...")
+    builder = builder_cls(config_name, preproc_args=conf)
+    if conf.clean_middle_cache:
+        builder.clean_disk_cache()
+    builder.preproc(n_proc=conf.num_preproc_mid_workers)
+    builder.download_and_prepare(num_proc=conf.num_preproc_arrow_writers)
+    dataset = builder.as_dataset()
+    logger.info(f"Dataset {dataset_name} {config_name} is prepared.")
+    logger.info(f"{dataset}")
+    # except Exception as e:
+    #     logger.error(f"Preparation of dataset {dataset_name} {config_name} exit with error: {e}.")
 
 
 def preproc(conf: PreprocArgs):
@@ -50,24 +51,17 @@ def preproc(conf: PreprocArgs):
         prepare_dataset(conf, builder_cls, dataset, config)
 
 
-if __name__ == '__main__':
-    # cli args
-    # conf_file = [abs path | rel path | file name]
-    cli_args: DictConfig = OmegaConf.from_cli()
-    logger.info(cli_args)
-    if 'conf_file' in cli_args.keys():
-        logger.info(cli_args.conf_file)
-        file_cfg = OmegaConf.load(get_conf_file_path(cli_args.conf_file))
-        cli_args.pop("conf_file")
-    else:
-        file_cfg = OmegaConf.create({})
-
-    code_cfg = OmegaConf.create(PreprocArgs().model_dump())
-    
+@hydra.main(config_path="hydra_configs", config_name="config", version_base=None)
+def main(cfg: DictConfig):
     setup_log()
-    cfg = OmegaConf.merge(code_cfg, file_cfg, cli_args)
-    cfg = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-    logger.info(cfg)
-    conf = PreprocArgs.model_validate(cfg)
-
+    logger.info(OmegaConf.to_yaml(cfg))
+    
+    # Convert OmegaConf to dict and validate with PreprocArgs
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
+    conf = PreprocArgs.model_validate(cfg_dict)
+    
     preproc(conf)
+
+
+if __name__ == '__main__':
+    main()

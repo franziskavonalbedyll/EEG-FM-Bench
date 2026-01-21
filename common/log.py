@@ -4,6 +4,7 @@ import logging
 import os.path
 from typing import Optional
 from logging import Filter, Formatter, StreamHandler
+from common.distributed.env import get_is_slurm_job, get_global_rank, get_is_master
 
 
 PRECISION_DICT = {

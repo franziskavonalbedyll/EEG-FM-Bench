@@ -1,20 +1,21 @@
 #!/bin/bash
-#SBATCH --job-name=baseline
-#SBATCH --output=/path/to/your/code/%x_%j.log
-#SBATCH --error=/path/to/your/code/%x_%j.err
+#SBATCH --job-name=eegpt-fm-baseline
+#SBATCH --output=slurm_logs/%x_%j.log
+#SBATCH --error=slurm_logs/%x_%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:2
-#SBATCH --partition=your_partition
+#SBATCH --partition=dev_gpu_h100
 #SBATCH --mem=64G
+#SBATCH --time=00:30:00
 
 
 # set -eo pipefail
 SCRIPT_ARGS="$@"
 
 
-ROOT_PATH=/path/to/your/code
+ROOT_PATH=/pfs/data6/home/ka/ka_anthropomatik/ka_pm3059/github/data-curation-for-EEG-FMs/code/benchmarks/EEG-FM-Bench
 cd $ROOT_PATH
 
 export CUDA_LAUNCH_BLOCKING=1
@@ -38,14 +39,14 @@ echo "PATH: $PATH"
 echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
 
-conda activate your_conda_env
+source .venv/bin/activate
 echo "Python path: $(which python)"
 
 
 echo "======= MAIN TASK ======="
 
 # example submit cli
-srun --export=ALL python baseline_main.py ${SCRIPT_ARGS}
+srun --export=ALL python -m torch.distributed.launch baseline_main.py ${SCRIPT_ARGS}
 
 
 EXIT_CODE=$?

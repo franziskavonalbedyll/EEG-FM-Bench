@@ -4,11 +4,16 @@
 __pycache__/
 wandb
 
+multirun/
+outputs/
+
 .venv/
 .conda/
 env/
 venv/
 ENV/
+
+slurm_logs/
 
 *.lock
 *.pyc

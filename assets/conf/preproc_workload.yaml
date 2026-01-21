@@ -1,0 +1,13 @@
+num_preproc_arrow_writers: 60
+num_preproc_mid_workers: 48
+
+pretrain_datasets: []
+
+clean_middle_cache: true
+
+finetune_datasets:
+  workload: finetune
+
+random_dropout: true
+dropout_rate: 0.3
+dropout_seed: 12

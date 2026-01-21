@@ -26,6 +26,7 @@ from omegaconf import OmegaConf
 from pandas import DataFrame
 from tqdm import tqdm
 
+from common.config import PreprocArgs
 from common.log import setup_log
 from common.path import CONF_ROOT, DATABASE_CACHE_ROOT, DATABASE_PROC_ROOT, DATABASE_RAW_ROOT, LOG_ROOT, PLATFORM
 from common.type import DatasetTaskType
@@ -52,6 +53,11 @@ class EEGConfig(BuilderConfig):
     filter_notch: float = 50.0
     fs: float = 256.0
     unit: str = "uV"
+
+    # random dropout conf
+    random_dropout: bool = False
+    dropout_rate: float = 0.0
+    dropout_seed: int = 12
 
     # middle cache storage
     mid_batch_size: int = 1e3
@@ -109,6 +115,7 @@ class EEGConfig(BuilderConfig):
         self.raw_path = os.path.join(self.database_raw_root, self.suffix_path)
         self.data_path = os.path.join(self.database_proc_root)
         self.mid_path = os.path.join(self.database_cache_root, self.dataset_name)
+        logger.info(f'Mid path: {self.mid_path}')
 
         self.wnd_len = int(self.fs) * self.wnd_div_sec
         self.category_query_dict: dict[str, int] = {name: idx for idx, name in enumerate(self.category)}
@@ -129,8 +136,17 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
         BUILDER_CONFIG_CLASS(name='pretrain'),
         BUILDER_CONFIG_CLASS(name='finetune', is_finetune=True),]
 
-    def __init__(self, config_name='pretrain', **kwargs):
+    def __init__(self, config_name='pretrain', preproc_args: PreprocArgs | None = None, **kwargs):
+        self.preproc_args = preproc_args
         conf: EEGConfig = self.builder_configs.get(config_name)
+        if preproc_args is not None:
+            conf.random_dropout = preproc_args.random_dropout
+            conf.dropout_rate = preproc_args.dropout_rate
+            conf.dropout_seed = preproc_args.dropout_seed
+
+        if conf.random_dropout:
+            conf.name += f'_dropout_{conf.dropout_rate}_seed_{conf.dropout_seed}'
+
         super().__init__(
             cache_dir=conf.data_path,
             dataset_name=conf.dataset_name,
@@ -258,6 +274,7 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
 
         np.random.seed(self.config.seed)
         self.clean_disk_cache()
+        self.clean_arrow_set()
         self.create_dir_structure()
 
         data_files = self._walk_raw_data_files()
@@ -332,6 +349,7 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
             logger.info(f'{self.config.dataset_name} arrow set cleared.')
         except Exception as e:
             logger.error(f'Error occurred during clean arrow dataset: {e}')
+            raise e
 
     def clean_disk_cache(self):
         try:
@@ -344,11 +362,14 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
             logger.info(f'{self.config.dataset_name} cache cleared.')
         except FileNotFoundError as e:
             logger.error(f'{self.config.dataset_name} cache not exist: {e}')
+            raise e
         except PermissionError:
             logger.error(f'Permission Denied')
+            raise e
         except Exception as e:
             logger.error(f'Error occurred during clean builder cache: {e}')
-
+            raise e
+        
     def _generate_middle_files(self, df: DataFrame, n_proc: Optional[int] = None):
         rows = df.to_dict(orient='records')
         results = self._run_func_parallel(
@@ -378,6 +399,11 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
                 chs_idx = self._fetch_chs_index(montage)
 
                 examples = self._generate_window_sample(raw, montage, chs_idx, label, self.config.persist_drop_last)
+                
+                if split == "train" and self.config.random_dropout and self.config.dropout_rate > 0.0:
+                    logger.info(f'Applying random dropout to file: {path}')
+                    examples = self._apply_random_dropout(examples, self.config.dropout_rate, self.config.dropout_seed)
+                
                 if len(examples) < 1:
                     return None
 
@@ -402,13 +428,28 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
                         index=False)
         except Exception as e:
             logger.error(f"Error persisting example file {path}: {str(e)}")
-            return None
+            raise e
+
 
         mid_df = pd.DataFrame(data={
             'key': [filename],
             'split': [split],
             'cnt': [len(examples)],})
         return mid_df
+    
+    def _apply_random_dropout(self, examples, dropout_rate: float, dropout_seed: int) -> dict:
+        """Apply random dropout to the data based on the config settings."""
+        
+        logger.info(f'Applying random dropout with rate {dropout_rate} and seed {dropout_seed}')
+        
+        rng = np.random.default_rng(dropout_seed)
+        keep = rng.random(len(examples)) >= dropout_rate
+        examples = [ex for ex, k in zip(examples, keep) if k]
+
+        logger.info(f"Removed {len(keep) - len(examples)} samples due to random dropout.")
+        if len(examples) == 0:
+            return None
+        return examples
 
     def _generate_window_sample(
             self,
@@ -535,7 +576,7 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
             return info
         except Exception as e:
             logger.error(f"Error accessing metadata in file {data}: {str(e)}")
-            return None
+            raise e
 
     def _check_data_length(self, df: DataFrame):
         mask = df['time'] >= float(self.config.wnd_div_sec)
@@ -655,7 +696,7 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
             n_proc=n_proc,
             desc='Checking montage channel'
         )
-        sel = np.array(results, dtype=np.bool)
+        sel = np.array(results, dtype=np.bool_)
 
         wrong_files = df.loc[~sel, 'path'].tolist()
         with open(self.log_err_files_path, 'a') as f:

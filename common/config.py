@@ -12,6 +12,9 @@ class PreprocArgs(BaseModel):
     num_preproc_mid_workers: int = 6
     pretrain_datasets: list[str] = Field(default_factory=lambda: [])
     finetune_datasets: dict[str, str] = Field(default_factory=lambda: {})
+    random_dropout: bool = False
+    dropout_rate: float = 0.0
+    dropout_seed: int = 12
 
 
 class BaseDataArgs(BaseModel):

@@ -7,9 +7,9 @@ RUN_ROOT = './assets/run'
 LOG_ROOT = './assets/run/log'
 CONF_ROOT = './assets/conf'
 
-DATABASE_RAW_ROOT = './dataset'
-DATABASE_PROC_ROOT = './arrow'
-DATABASE_CACHE_ROOT = './cache'
+DATABASE_RAW_ROOT = './data/raw'
+DATABASE_PROC_ROOT = './data/processed'
+DATABASE_CACHE_ROOT = './data/cache'
 
 
 def get_conf_file_path(path):

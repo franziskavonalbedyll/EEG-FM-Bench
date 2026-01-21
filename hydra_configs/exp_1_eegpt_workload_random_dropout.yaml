@@ -1,0 +1,21 @@
+defaults:
+  - base
+  - platform: bwuni_dev
+  - _self_
+
+name: exp_1_eegpt_workload_random_dropout
+seed: 12
+pretrain_datasets: []
+clean_middle_cache: true
+finetune_datasets:
+  workload: finetune
+
+random_dropout: true
+dropout_rate: 0.3
+dropout_seed: 12
+
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      dropout_rate: 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7

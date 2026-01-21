@@ -1,0 +1,94 @@
+# =========================
+# Training pattern flags
+# =========================
+seed: 42
+master_port: 51002
+multitask: false
+model_type: 'eegpt'
+
+# =========================
+# Data configuration
+# =========================
+data:
+  batch_size: 32
+  num_workers: 1
+  datasets:
+    workload: 'finetune'   # <-- ONLY workload dataset
+
+# =========================
+# EEGPT model configuration
+# =========================
+model:
+  pretrained_path: "./assets/run/ckpt/pretrain/EEGPT/checkpoint/eegpt_mcae_58chs_4s_large4E.ckpt"
+
+  # Architecture (keep defaults)
+  patch_size: 64
+  patch_stride: 32
+  embed_num: 4
+  embed_dim: 512
+  depth: 8
+  num_heads: 8
+  mlp_ratio: 4.0
+
+  # Regularization
+  dropout_rate: 0.1
+  attn_dropout_rate: 0.1
+  drop_path_rate: 0.1
+
+  # Initialization
+  init_std: 0.02
+  qkv_bias: true
+
+  # Channel adaptation (workload is fixed-channel)
+  use_channel_conv: false
+  conv_chan_dim: 22
+
+  # Classification head
+  linear_probe1_dim: 16
+  linear_probe1_max_norm: 1.0
+  linear_probe2_max_norm: 0.25
+  head_dropout: 0.1
+  mlp_hidden_dim: [128]
+
+# =========================
+# Training configuration
+# =========================
+training:
+  max_epochs: 50
+  weight_decay: 0.01
+  max_grad_norm: 3.0
+
+  # Optimizer / LR
+  lr_schedule: "onecycle"
+  max_lr: 5e-4
+  encoder_lr_scale: 0.1
+  warmup_epochs: 5
+  warmup_scale: 1e-2
+  pct_start: 0.2
+  min_lr: 1e-6
+
+  # Finetuning options
+  freeze_encoder: false    # <-- full finetuning
+  use_amp: true
+  label_smoothing: 0.1
+
+# =========================
+# Logging configuration
+# =========================
+logging:
+  experiment_name: "eegpt_finetune_workload"
+  output_dir: "./assets/run/log/eegpt/workload"
+  ckpt_dir: "./assets/run/ckpt/eegpt/workload"
+
+  use_cloud: true
+  cloud_backend: "wandb"
+
+  project: "eegpt"
+  entity: null
+  api_key: null
+  offline: false
+
+  tags: ["eegpt", "finetune", "workload"]
+
+  log_step_interval: 1
+  ckpt_interval: 5

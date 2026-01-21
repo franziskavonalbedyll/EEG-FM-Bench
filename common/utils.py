@@ -99,7 +99,7 @@ class ElectrodeSet:
 
             bool_matrix.append(bool_list)
 
-        bool_matrix = np.array(bool_matrix, dtype=np.bool)
+        bool_matrix = np.array(bool_matrix, dtype=np.bool_)
         return bool_matrix
 
 
