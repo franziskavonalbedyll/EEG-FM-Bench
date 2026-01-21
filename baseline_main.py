@@ -1,33 +1,30 @@
 #!/usr/bin/env python3
 import sys
+import logging
 from pathlib import Path
 
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
+import hydra
 
 from baseline.abstract.factory import ModelRegistry
+from common.log import setup_log
 from common.path import get_conf_file_path
 from common.utils import setup_yaml
 
 
-def main():
+logger = logging.getLogger('baseline')
+
+
+@hydra.main(config_path="hydra_configs", config_name="config", version_base=None)
+def main(cfg: DictConfig):
     """Main training function that can handle any registered baseline model."""
     setup_yaml()
+    setup_log()
     
-    # Parse CLI arguments
-    cli_args = OmegaConf.from_cli()
-
-    if 'conf_file' not in cli_args:
-        raise ValueError("Please provide a config file: conf_file=path/to/config.yaml")
+    logger.info(OmegaConf.to_yaml(cfg))
     
-    # Get model type from CLI args or config
-    model_type: str = cli_args.get('model_type', None)
-
-    # Load config file
-    conf_file_path = get_conf_file_path(cli_args.conf_file)
-    file_cfg = OmegaConf.load(conf_file_path)
-
-    if model_type is None:
-        model_type = file_cfg.get('model_type')
+    # Get model type from config
+    model_type: str = cfg.get('model_type', None)
 
     # Validate model type
     available_models = ModelRegistry.list_models()
@@ -36,28 +33,21 @@ def main():
     
     # Create base config for the specified model type
     config_class = ModelRegistry.get_config_class(model_type)
-    code_cfg = OmegaConf.create(config_class().model_dump())
     
-    # Merge configurations: code defaults < file config < CLI args
-    merged_config = OmegaConf.merge(code_cfg, file_cfg, cli_args)
-    
-    # Ensure model_type is set correctly
-    merged_config.model_type = model_type
-    
-    # Convert to config object
-    cfg_dict = OmegaConf.to_container(merged_config, resolve=True, throw_on_missing=True)
-    cfg = config_class.model_validate(cfg_dict)
+    # Convert OmegaConf to dict and validate with config class
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
+    config = config_class.model_validate(cfg_dict)
     
     # Validate configuration
-    if not cfg.validate_config():
+    if not config.validate_config():
         raise ValueError(f"Invalid configuration for model type: {model_type}")
     
     # Setup output directory
-    output_dir = Path(cfg.logging.output_dir)
+    output_dir = Path(config.logging.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Create and run trainer
-    trainer = ModelRegistry.create_trainer(cfg)
+    trainer = ModelRegistry.create_trainer(config)
     trainer.run()
 
 
@@ -72,4 +62,4 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "list-models":
         list_available_models()
     else:
-        main() 
+        main()

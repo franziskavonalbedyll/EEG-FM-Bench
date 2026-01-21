@@ -13,5 +13,7 @@ hydra:
   launcher:
     # launcher/cluster specific options
     partition: "dev_gpu_h100"
-    timeout_min: 10
-    gres: gpu:1
+    timeout_min: 30
+    gres: gpu:2
+    tasks_per_node: 2
+    gpus_per_node: 2

@@ -179,6 +179,9 @@ class AbstractDataLoaderFactory(ABC):
         split: datasets.NamedSplit,
         num_replicas: int = 1,
         rank: int = 0,
+        random_dropout: bool = False,
+        dropout_rate: float = 0.0,
+        dropout_seed: int = 12,
     ):
         """Create data loader for training/evaluation.
         
@@ -194,7 +197,10 @@ class AbstractDataLoaderFactory(ABC):
             dataset_names=dataset_names,
             builder_configs=config_names,
             split=split,
-            cast_label=True
+            cast_label=True,
+            random_dropout=random_dropout,
+            dropout_rate=dropout_rate,
+            dropout_seed=dropout_seed,
         )
 
         # Create adapter
@@ -235,6 +241,9 @@ class AbstractDataLoaderFactory(ABC):
         num_replicas: int,
         rank: int,
         split: datasets.NamedSplit,
+        random_dropout: bool = False,
+        dropout_rate: float = 0.0,
+        dropout_seed: int = 12,
     ) -> tuple[Union[list[DataLoader], DataLoader], Union[list[DistributedGroupBatchSampler], DistributedGroupBatchSampler]]:
         if mixed:
             return self.loading_dataset(
@@ -242,6 +251,9 @@ class AbstractDataLoaderFactory(ABC):
                 split=split,
                 num_replicas=num_replicas,
                 rank=rank,
+                random_dropout=random_dropout,
+                dropout_rate=dropout_rate,
+                dropout_seed=dropout_seed,
             )
         else:
             dataloaders, samplers = [], []
@@ -250,7 +262,10 @@ class AbstractDataLoaderFactory(ABC):
                     datasets_config={dataset_name: config_name},
                     split=split,
                     num_replicas=num_replicas,
-                    rank=rank
+                    rank=rank,
+                    random_dropout=random_dropout,
+                    dropout_rate=dropout_rate,
+                    dropout_seed=dropout_seed,
                 )
                 dataloaders.append(loader)
                 samplers.append(sampler)

@@ -1,0 +1,117 @@
+defaults:
+  - base
+  - _self_
+  - platform: bwuni_dev
+
+# Enable Hydra multirun for sweeping
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      dropout_rate: 0.1
+
+# Experiment name
+name: exp_1_eegpt_workload_dropout_sweep
+
+# Preprocessing configuration
+seed: 12
+pretrain_datasets: []
+clean_middle_cache: false  # Set to true to clean cache between runs
+finetune_datasets:
+  workload: finetune
+
+# Dropout parameters (swept by Hydra)
+random_dropout: true
+dropout_rate: 0.1  # Will be overridden by Hydra sweep
+dropout_seed: 12
+
+# Training configuration
+model_type: 'eegpt'
+multitask: false
+master_port: 51002
+
+# Data configuration
+data:
+  batch_size: 32
+  num_workers: 1
+  datasets:
+    workload: 'finetune'
+  random_dropout: ${random_dropout}
+  dropout_rate: ${dropout_rate}
+  dropout_seed: ${dropout_seed}
+
+# EEGPT model configuration
+model:
+  pretrained_path: "./assets/run/ckpt/pretrain/EEGPT/checkpoint/eegpt_mcae_58chs_4s_large4E.ckpt"
+
+  # Architecture (keep defaults)
+  patch_size: 64
+  patch_stride: 32
+  embed_num: 4
+  embed_dim: 512
+  depth: 8
+  num_heads: 8
+  mlp_ratio: 4.0
+
+  # Regularization
+  dropout_rate: 0.1
+  attn_dropout_rate: 0.1
+  drop_path_rate: 0.1
+
+  # Initialization
+  init_std: 0.02
+  qkv_bias: true
+
+  # Channel adaptation
+  use_channel_conv: false
+  conv_chan_dim: 22
+
+  # Classification head
+  linear_probe1_dim: 16
+  linear_probe1_max_norm: 1.0
+  linear_probe2_max_norm: 0.25
+  head_dropout: 0.1
+
+  # Grad-CAM and t-SNE
+  grad_cam: false
+  t_sne: false
+  grad_cam_target: 'channel'
+
+# Training parameters
+training:
+  max_epochs: 100
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+
+  lr_schedule: "onecycle"
+  max_lr: 1e-4
+  encoder_lr_scale: 0.1
+  warmup_epochs: 5
+  warmup_scale: 1e-2
+  pct_start: 0.2
+  min_lr: 1e-6
+
+  use_amp: true
+  freeze_encoder: true
+
+# Logging configuration
+logging:
+  experiment_name: ${name}_dropout_${dropout_rate}
+  output_dir: ./outputs/${name}/dropout_${dropout_rate}
+  ckpt_dir: ./checkpoints/${name}/dropout_${dropout_rate}
+
+  use_cloud: true
+  cloud_backend: "wandb"
+  project: "eeg-fm-bench"
+  entity: null
+  api_key: null
+  offline: false
+
+  tags:
+    - eegpt
+    - workload
+    - dropout_sweep
+    - dropout_${dropout_rate}
+
+  log_step_interval: 1
+  ckpt_interval: 10

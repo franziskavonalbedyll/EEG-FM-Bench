@@ -22,6 +22,11 @@ class BaseDataArgs(BaseModel):
     datasets: Dict[str, str] = Field(default_factory=lambda: {})
     batch_size: int = 32
     num_workers: int = 2
+    
+    # Dropout parameters for data curation
+    random_dropout: bool = False
+    dropout_rate: float = 0.0
+    dropout_seed: int = 12
 
 
 class BaseModelArgs(BaseModel):
