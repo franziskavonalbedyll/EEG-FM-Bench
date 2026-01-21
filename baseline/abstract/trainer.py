@@ -110,18 +110,13 @@ class AbstractTrainer(ABC):
     def setup_distributed(self):
         """Setup distributed training environment."""
         rank = get_global_rank()
-        logger.info(f"Setting up distributed training: rank {rank}")
         local_rank = get_local_rank()
-        logger.info(f"Local rank: {local_rank}")
         world_size = get_world_size()
-        logger.info(f"World size: {world_size}")
         master_addr = get_master_addr()
-        logger.info(f"Master address: {master_addr}")
         master_port = get_master_port(
             job_id=int(os.environ.get("SLURM_JOB_ID", -1)),
             port=self.cfg.master_port
         )
-        logger.info(f"Master port: {master_port}")
 
         os.environ["RANK"] = str(rank)
         os.environ["WORLD_SIZE"] = str(world_size)
@@ -132,24 +127,19 @@ class AbstractTrainer(ABC):
         logger.info("Environment variables for distributed training set")
 
         assert 0 <= local_rank < 8
-        logger.info("Assertion passed")
         torch.cuda.set_device(local_rank)
-        logger.info(f"CUDA device set to {local_rank}")
 
         torch.distributed.init_process_group(
             backend="nccl",
             device_id=torch.device(f"cuda:{local_rank}"),
         )
-        logger.info("Process group for distributed training initialized")
 
         self.device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
-        logger.info(f"Trainer device set to {self.device}")
 
         self.world_size = world_size
         self.rank = rank
         self.local_rank = local_rank
 
-        logger.info("Distributed training setup complete")
     
     def setup_logging(self):
         """Setup logging configuration."""
