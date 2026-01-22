@@ -1,0 +1,18 @@
+defaults:
+  - /base
+  - /models: eegpt
+  - /training: full_finetune
+  -  _self_
+
+# Training configuration
+model_type: 'eegpt'
+multitask: false
+master_port: 51002
+
+# Data configuration
+data:
+  batch_size: 32
+  num_workers: 1
+  datasets:
+    workload: 'finetune'
+  random_dropout: false

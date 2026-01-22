@@ -1,0 +1,6 @@
+defaults:
+  - base
+  - _self_
+
+finetune_datasets:
+  workload: finetune

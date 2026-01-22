@@ -1,0 +1,15 @@
+# Training parameters
+training:
+  max_epochs: 100
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+
+  lr_schedule: "onecycle"
+  max_lr: 1e-4
+  encoder_lr_scale: 0.1
+  warmup_epochs: 5
+  warmup_scale: 1e-2
+  pct_start: 0.2
+  min_lr: 1e-6
+
+  use_amp: true

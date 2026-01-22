@@ -1,0 +1,6 @@
+defaults:
+  - base
+  - _self_
+
+training:
+  freeze_encoder: true

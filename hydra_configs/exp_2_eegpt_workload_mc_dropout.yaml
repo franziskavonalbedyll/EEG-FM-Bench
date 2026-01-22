@@ -1,0 +1,36 @@
+defaults:
+  - eegpt_finetune_workload_base
+  - training: full_finetune
+  - platform: bwuni_dev
+  - _self_
+
+# Experiment name
+name: exp_2_eegpt_workload_mc_dropout
+
+# Preprocessing configuration
+seed: ${seed}
+
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      mc_dropout_threshold: 0.1, 0.4
+
+# DC method
+random_dropout: false
+mc_dropout: true
+mc_dropout_threshold: 0.4
+mc_dropout_iterations: 10
+
+# Logging configuration
+logging:
+  experiment_name: ${name}_threshold_${mc_dropout_threshold}_iterations_${mc_dropout_iterations}_seed_${seed}
+  output_dir: ./outputs/${name}/full_finetune/mc_dropout/${mc_dropout_threshold}/${mc_dropout_iterations}/seed_${seed}
+  ckpt_dir: ./checkpoints/${name}/full_finetune/mc_dropout/${mc_dropout_threshold}/${mc_dropout_iterations}/seed_${seed}
+
+  tags:
+    - eegpt
+    - workload
+    - mc_dropout
+    - threshold_${mc_dropout_threshold}
+    - iterations_${mc_dropout_iterations}

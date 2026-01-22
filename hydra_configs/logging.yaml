@@ -1,0 +1,10 @@
+logging:
+  use_cloud: true
+  cloud_backend: "wandb"
+  project: "eeg-fm-bench"
+  entity: null
+  api_key: null
+  offline: false
+
+  log_step_interval: 1
+  ckpt_interval: 10

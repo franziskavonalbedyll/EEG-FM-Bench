@@ -1,4 +1,5 @@
 defaults:
+  - logging
   - _self_
 
 wandb: True
