@@ -25,3 +25,4 @@ mne-bids
 comet-ml
 braindecode
 omegaconf
+seaborn

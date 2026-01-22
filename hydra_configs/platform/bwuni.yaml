@@ -12,6 +12,6 @@ hydra:
     subdir: ${name}/seed_${seed}
   launcher:
     # launcher/cluster specific options
-    partition: "dev_gpu_h100"
-    timeout_min: 30
-    gres: gpu:1
+    partition: "gpu_h100,gpu_a100_il,gpu_h100_il"
+    timeout_min: 30 # in minutes, increase for your needs
+    gres: gpu:1 # one gpu allocated

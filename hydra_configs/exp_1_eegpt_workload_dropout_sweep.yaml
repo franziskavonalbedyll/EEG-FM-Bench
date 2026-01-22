@@ -1,20 +1,20 @@
 defaults:
   - base
   - _self_
-  - platform: bwuni_dev
+  - platform: bwuni_short
 
 # Enable Hydra multirun for sweeping
 hydra:
   mode: MULTIRUN
   sweeper:
     params:
-      dropout_rate: 0.1
-
+      dropout_rate: 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9
+      seed: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 # Experiment name
 name: exp_1_eegpt_workload_dropout_sweep
 
 # Preprocessing configuration
-seed: 12
+seed: ${seed}
 pretrain_datasets: []
 clean_middle_cache: false  # Set to true to clean cache between runs
 finetune_datasets:
@@ -23,7 +23,7 @@ finetune_datasets:
 # Dropout parameters (swept by Hydra)
 random_dropout: true
 dropout_rate: 0.1  # Will be overridden by Hydra sweep
-dropout_seed: 12
+dropout_seed: ${seed}
 
 # Training configuration
 model_type: 'eegpt'
@@ -96,9 +96,9 @@ training:
 
 # Logging configuration
 logging:
-  experiment_name: ${name}_dropout_${dropout_rate}
-  output_dir: ./outputs/${name}/dropout_${dropout_rate}
-  ckpt_dir: ./checkpoints/${name}/dropout_${dropout_rate}
+  experiment_name: ${name}_dropout_${dropout_rate}_seed_${seed}
+  output_dir: ./outputs/${name}/dropout_${dropout_rate}/seed_${seed}
+  ckpt_dir: ./checkpoints/${name}/dropout_${dropout_rate}/seed_${seed}
 
   use_cloud: true
   cloud_backend: "wandb"

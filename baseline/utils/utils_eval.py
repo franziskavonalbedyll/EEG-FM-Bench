@@ -4,7 +4,6 @@ import pathlib
 from collections import defaultdict, deque
 
 import torch
-import torch.distributed as dist
 
 from baseline.utils.metrics import binary_metrics_fn, multiclass_metrics_fn
 
@@ -51,15 +50,9 @@ class SmoothedValue(object):
     def synchronize_between_processes(self):
         """
         Warning: does not synchronize the deque!
+        Note: This method is now a no-op since we removed distributed computing support.
         """
-        # if not is_dist_avail_and_initialized():
-        #     return
-        t = torch.tensor([self.count, self.total], dtype=torch.float64, device='cuda')
-        dist.barrier()
-        dist.all_reduce(t)
-        t = t.tolist()
-        self.count = int(t[0])
-        self.total = t[1]
+        pass
 
     @property
     def median(self):

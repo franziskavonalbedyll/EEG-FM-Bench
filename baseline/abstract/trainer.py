@@ -23,10 +23,6 @@ from common.config import AbstractConfig
 from baseline.utils.utils import seed_torch
 from common.log import setup_log
 from data.processor.wrapper import get_dataset_n_class, get_dataset_category
-from common.distributed.env import get_is_master, get_global_rank, get_local_rank, get_world_size, get_master_addr, \
-    get_master_port, get_specific_dirname
-from common.distributed.loader import DistributedGroupBatchSampler
-from common.utils import clean_torch_distributed
 
 logger = logging.getLogger("baseline")
 
@@ -90,10 +86,6 @@ class AbstractTrainer(ABC):
 
         self.epoch = 0
         self.current_step = 0
-
-        self.world_size = 1
-        self.rank = 0
-        self.local_rank = 0
         
         # Dataset information
         self.ds_conf = cfg.data.datasets
@@ -105,56 +97,31 @@ class AbstractTrainer(ABC):
 
         self.start_time = datetime.datetime.now()
         self.comet_experiment = None
+        
+        # CSV results tracking
+        self.results_history = []
 
     
-    def setup_distributed(self):
-        """Setup distributed training environment."""
-        rank = get_global_rank()
-        local_rank = get_local_rank()
-        world_size = get_world_size()
-        master_addr = get_master_addr()
-        master_port = get_master_port(
-            job_id=int(os.environ.get("SLURM_JOB_ID", -1)),
-            port=self.cfg.master_port
-        )
-
-        os.environ["RANK"] = str(rank)
-        os.environ["WORLD_SIZE"] = str(world_size)
-        os.environ["MASTER_ADDR"] = master_addr
-        os.environ["MASTER_PORT"] = str(master_port)
-        os.environ["LOCAL_RANK"] = str(local_rank)
-
-        logger.info("Environment variables for distributed training set")
-
-        assert 0 <= local_rank < 8
-        torch.cuda.set_device(local_rank)
-
-        torch.distributed.init_process_group(
-            backend="nccl",
-            device_id=torch.device(f"cuda:{local_rank}"),
-        )
-
-        self.device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
-
-        self.world_size = world_size
-        self.rank = rank
-        self.local_rank = local_rank
+    def setup_device(self):
+        """Setup device for training."""
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            torch.cuda.set_device(0)
+        logger.info(f"Using device: {self.device}")
 
     
     def setup_logging(self):
         """Setup logging configuration."""
-        if get_is_master():
-            dirname = get_specific_dirname()
-            output_dir = Path(self.cfg.logging.output_dir, dirname)
-            output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = Path(self.cfg.logging.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-            log_file = output_dir / f"{self.cfg.model_type}_trainer.log"
-            setup_log(
-                file_path=str(log_file),
-                start_time=self.start_time.timestamp(),
-                name="baseline",
-                level="INFO"
-            )
+        log_file = output_dir / f"{self.cfg.model_type}_trainer.log"
+        setup_log(
+            file_path=str(log_file),
+            start_time=self.start_time.timestamp(),
+            name="baseline",
+            level="INFO"
+        )
 
         logger.info(f"Starting {self.cfg.model_type} training with "
                    f"{self.num_ds} dataset(s): {list(self.ds_conf.keys())}")
@@ -164,15 +131,14 @@ class AbstractTrainer(ABC):
         if not self.cfg.logging.use_cloud:
             return
 
-        if get_is_master():
-            # Initialize logging based on backend configuration
-            backend = self.cfg.logging.cloud_backend.lower()
+        # Initialize logging based on backend configuration
+        backend = self.cfg.logging.cloud_backend.lower()
 
-            if backend in ['wandb', 'both']:
-                self._init_wandb()
+        if backend in ['wandb', 'both']:
+            self._init_wandb()
 
-            if backend in ['comet', 'both']:
-                self._init_comet()
+        if backend in ['comet', 'both']:
+            self._init_comet()
 
     def _init_wandb(self):
         """Initialize wandb logging."""
@@ -195,6 +161,7 @@ class AbstractTrainer(ABC):
                 'project': self.cfg.logging.project or self.cfg.logging.experiment_name,
                 'name': (
                     f"{self.model_type}_{'uni' if self.cfg.multitask else 'sep'}"
+                    f"_dropout_rate_{self.cfg.data.dropout_rate}"
                     f"_{datetime.datetime.now().strftime('%m%d_%H%M%S')}"
                 ),
                 'config': self.cfg.model_dump(),
@@ -264,9 +231,6 @@ class AbstractTrainer(ABC):
 
     def finish_cloud_logging(self):
         """Finish cloud logging."""
-        if not get_is_master():
-            return
-
         backend = self.cfg.logging.cloud_backend.lower()
 
         if backend in ['wandb', 'both']:
@@ -290,6 +254,72 @@ class AbstractTrainer(ABC):
             logger.info("Comet.ml logging finished")
         except Exception as e:
             logger.warning(f"Error finishing comet.ml: {e}")
+    
+    def _store_results_for_csv(self, metrics: Dict[str, float], ds_name: str, prefix: str):
+        """Store results for CSV export with descriptive metadata."""
+        # Extract configuration metadata
+        result_entry = {
+            'timestamp': datetime.datetime.now().isoformat(),
+            'model': self.model_type,
+            'dataset': ds_name,
+            'split': prefix,
+            'seed': self.cfg.seed,
+            'multitask': self.multitask,
+        }
+        
+        # Add dropout info if available
+        if hasattr(self.cfg.data, 'random_dropout'):
+            result_entry['random_dropout'] = self.cfg.data.random_dropout
+        if hasattr(self.cfg.data, 'dropout_rate'):
+            result_entry['dropout_rate'] = self.cfg.data.dropout_rate
+        if hasattr(self.cfg.data, 'dropout_seed'):
+            result_entry['dropout_seed'] = self.cfg.data.dropout_seed
+        
+        # Add all metrics (strip dataset/prefix from keys)
+        for key, value in metrics.items():
+            # Remove dataset name and prefix from key
+            clean_key = key.replace(f'{ds_name}/{prefix}/', '')
+            result_entry[clean_key] = value
+        
+        self.results_history.append(result_entry)
+    
+    def save_results_to_csv(self, ds_name: Optional[str] = None):
+        """Save accumulated results to CSV file with descriptive filename."""
+        if not self.results_history:
+            logger.warning("No results to save to CSV")
+            return
+        
+        # Create results directory
+        results_dir = Path(self.cfg.logging.output_dir) / 'results'
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Build descriptive filename
+        filename_parts = [
+            self.model_type,
+        ]
+        
+        if ds_name:
+            filename_parts.append(ds_name)
+        elif len(self.ds_conf) == 1:
+            filename_parts.append(list(self.ds_conf.keys())[0])
+        
+        if hasattr(self.cfg.data, 'dropout_rate'):
+            filename_parts.append(f"dropout_{self.cfg.data.dropout_rate}")
+        
+        filename_parts.append(f"seed_{self.cfg.seed}")
+        filename_parts.append(self.start_time.strftime("%Y%m%d_%H%M%S"))
+        
+        filename = "_".join(filename_parts) + ".csv"
+        csv_path = results_dir / filename
+        
+        # Convert to DataFrame and save
+        df = pd.DataFrame(self.results_history)
+        df.to_csv(csv_path, index=False)
+        
+        logger.info(f"Results saved to CSV: {csv_path}")
+        logger.info(f"Total records: {len(df)}")
+        
+        return csv_path
 
     def _create_ft_cloud_log_data(self, log_data: dict, prefix: str, ds_metric: dict):
         # eval epoch metrics
@@ -458,34 +488,6 @@ class AbstractTrainer(ABC):
                 }}
             logger.info(f"Dataset {ds_name} - {ds_conf} only")
 
-    def _gather_tensor(self, tensor: Tensor, max_length: int) -> Optional[list[Tensor]]:
-        exist_mask = torch.tensor([tensor.shape[0]], dtype=torch.int32, device=self.device)
-        mask_gather_list = [torch.zeros_like(exist_mask) for _ in range(self.world_size)] \
-            if get_is_master() else None
-        torch.distributed.gather(exist_mask, gather_list=mask_gather_list, dst=0)
-
-        tensor_pad = torch.zeros([max_length, *(tensor.shape[1:])], dtype=tensor.dtype, device=tensor.device)
-        tensor_pad[:tensor.shape[0]] = tensor
-        gather_list = [torch.zeros_like(tensor_pad) for _ in range(self.world_size)] \
-            if get_is_master() else None
-        torch.distributed.gather(tensor_pad, gather_list=gather_list, dst=0)
-
-        if get_is_master():
-            for i in range(len(gather_list)):
-                gather_list[i] = gather_list[i][:mask_gather_list[i]]
-
-        return gather_list
-
-    def _gather_result(self, logits: Tensor, targets: Tensor) -> tuple[Optional[Tensor], Optional[Tensor]]:
-        logits_list = self._gather_tensor(logits, self.cfg.data.batch_size)
-        target_list = self._gather_tensor(targets, self.cfg.data.batch_size)
-
-        if get_is_master():
-            all_logits = torch.cat(logits_list, dim=0)
-            all_target = torch.cat(target_list, dim=0)
-            return all_logits.cpu(), all_target.cpu()
-        return None, None
-
     @staticmethod
     def _calc_confusion_matrix(pred: Tensor, target: Tensor, n_class: int) -> Tensor:
         pred, target = pred.long(), target.long()
@@ -508,8 +510,8 @@ class AbstractTrainer(ABC):
         dataloaders, samplers = self.dataloader_factory.create_dataloader(
             datasets_config=self.ds_conf,
             mixed=mixed,
-            num_replicas=self.world_size,
-            rank=self.local_rank,
+            num_replicas=1,
+            rank=0,
             split=split,
             random_dropout=self.cfg.data.random_dropout,
             dropout_rate=self.cfg.data.dropout_rate,
@@ -524,8 +526,8 @@ class AbstractTrainer(ABC):
         dataloader, sampler = self.dataloader_factory.create_dataloader(
             datasets_config={ds_name: ds_config},
             mixed=False,
-            num_replicas=self.world_size,
-            rank=self.local_rank,
+            num_replicas=1,
+            rank=0,
             split=split,
             random_dropout=self.cfg.data.random_dropout,
             dropout_rate=self.cfg.data.dropout_rate,
@@ -619,9 +621,10 @@ class AbstractTrainer(ABC):
         loss = self.loss_fn(logits, labels)
         return logits, loss
 
-    def train_epoch(self, train_loader: DataLoader, train_sampler: DistributedGroupBatchSampler):
+    def train_epoch(self, train_loader: DataLoader, train_sampler):
         self.model.train()
-        train_sampler.set_epoch(self.epoch)
+        if hasattr(train_sampler, 'set_epoch'):
+            train_sampler.set_epoch(self.epoch)
 
         batch: dict
         for step_in_epoch, batch in enumerate(train_loader):
@@ -641,7 +644,7 @@ class AbstractTrainer(ABC):
             # Backward pass
             self.scaler.scale(loss).backward()
             # for name, param in self.model.named_parameters():
-            #     if get_is_master() and param.grad is not None:
+            #     if param.grad is not None:
             #         logger.info(
             #             f"{name} "
             #             f"Range: [{param.grad.min():.8f}, {param.grad.max():.8f}], "
@@ -653,40 +656,32 @@ class AbstractTrainer(ABC):
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
-            # Logging with distributed reduction
+            # Logging
             if self.current_step % self.cfg.logging.log_step_interval == 0:
                 # Calculate step accuracy
                 preds = torch.argmax(logits, dim=-1)
                 step_acc = (preds == labels).float().mean()
 
-                # Create tensors for distributed reduction
-                loss_tensor = loss.clone().detach()
-                acc_tensor = step_acc.clone().detach()
+                log_data = {
+                    'train/epoch': self.epoch,
+                    'train/step': self.current_step,
+                    'train/loss_ce': loss.cpu().item(),
+                    'train/acc': step_acc.cpu().item(),
+                    'train/grad_norm': grad_norm,
+                    'train/header_lr': self.scheduler.get_last_lr()[0],
+                }
 
-                torch.distributed.all_reduce(loss_tensor, op=torch.distributed.ReduceOp.AVG)
-                torch.distributed.all_reduce(acc_tensor, op=torch.distributed.ReduceOp.AVG)
+                if not self.cfg.training.freeze_encoder:
+                    log_data['train/encoder_lr'] = self.scheduler.get_last_lr()[1]
 
-                if get_is_master():
-                    log_data = {
-                        'train/epoch': self.epoch,
-                        'train/step': self.current_step,
-                        'train/loss_ce': loss_tensor.cpu().item(),
-                        'train/acc': acc_tensor.cpu().item(),
-                        'train/grad_norm': grad_norm,
-                        'train/header_lr': self.scheduler.get_last_lr()[0],
-                    }
+                if not self.multitask:
+                    log_data = {f"{ds_name}/{key}": value for key, value in log_data.items()}
 
-                    if not self.cfg.training.freeze_encoder:
-                        log_data['train/encoder_lr'] = self.scheduler.get_last_lr()[1]
+                # Log to cloud services
+                if self.cfg.logging.use_cloud:
+                    self._log_to_cloud(log_data)
 
-                    if not self.multitask:
-                        log_data = {f"{ds_name}/{key}": value for key, value in log_data.items()}
-
-                    # Log to cloud services
-                    if self.cfg.logging.use_cloud:
-                        self._log_to_cloud(log_data)
-
-                    logger.info(format_console_log_dict(log_data, prefix='train'))
+                logger.info(format_console_log_dict(log_data, prefix='train'))
 
             self.current_step += 1
             self.scheduler.step()
@@ -701,8 +696,7 @@ class AbstractTrainer(ABC):
 
     def eval_epoch(self, dataloaders: list[DataLoader], prefix: str):
         """Evaluate one epoch and return metrics."""
-        if get_is_master():
-            logger.info(f"Starting {prefix} evaluation...")
+        logger.info(f"Starting {prefix} evaluation...")
 
         self.model.eval()
 
@@ -735,45 +729,37 @@ class AbstractTrainer(ABC):
                     overall_metrics[ds_name]['loss_sum'] += loss.detach() * len(batch)
                     overall_metrics[ds_name]['cnt'] += len(batch)
                     overall_metrics[ds_name]['cm'] += cm.detach()
-
-                    logits_across, labels_across = self._gather_result(logits.detach(), labels.detach())
-                    if get_is_master():
-                        overall_metrics[ds_name]['logits'].append(logits_across.cpu())
-                        overall_metrics[ds_name]['labels'].append(labels_across.cpu())
-
-                torch.distributed.barrier()
+                    overall_metrics[ds_name]['logits'].append(logits.detach().cpu())
+                    overall_metrics[ds_name]['labels'].append(labels.detach().cpu())
 
             log_dict = {}
             for ds_name in self.ds_info.keys():
-                torch.distributed.all_reduce(overall_metrics[ds_name]['loss_sum'], op=torch.distributed.ReduceOp.SUM)
-                torch.distributed.all_reduce(overall_metrics[ds_name]['cnt'], op=torch.distributed.ReduceOp.SUM)
-                torch.distributed.all_reduce(overall_metrics[ds_name]['cm'], op=torch.distributed.ReduceOp.SUM)
-
                 overall_metrics[ds_name]['loss'] = overall_metrics[ds_name]['loss_sum'] / overall_metrics[ds_name][
                     'cnt'].float()
 
-                # Calculate metrics on aggregated data (only master process in distributed mode)
-                if get_is_master():
-                    labels_all = torch.concat(overall_metrics[ds_name]['labels'], dim=0)
-                    logits_all = torch.concat(overall_metrics[ds_name]['logits'], dim=0)
-                    loss_metric = overall_metrics[ds_name]['loss'].detach().cpu().item()
-                    metrics = self._calculate_metrics_for_dataset(
-                        labels=labels_all,
-                        logits=logits_all,
-                        ds_name=ds_name,
-                        prefix=prefix,
-                        loss=loss_metric
-                    )
+                # Calculate metrics on aggregated data
+                labels_all = torch.concat(overall_metrics[ds_name]['labels'], dim=0)
+                logits_all = torch.concat(overall_metrics[ds_name]['logits'], dim=0)
+                loss_metric = overall_metrics[ds_name]['loss'].detach().cpu().item()
+                metrics = self._calculate_metrics_for_dataset(
+                    labels=labels_all,
+                    logits=logits_all,
+                    ds_name=ds_name,
+                    prefix=prefix,
+                    loss=loss_metric
+                )
 
-                    log_dict = log_dict | metrics
-                    log_console = format_console_log_dict(metrics, prefix=f"{ds_name}/{prefix}")
-                    logger.info(log_console)
+                log_dict = log_dict | metrics
+                log_console = format_console_log_dict(metrics, prefix=f"{ds_name}/{prefix}")
+                logger.info(log_console)
+                
+                # Store results for CSV export
+                if prefix in ['eval', 'test']:
+                    self._store_results_for_csv(metrics, ds_name, prefix)
 
-            if get_is_master() and self.cfg.logging.use_cloud:
+            if self.cfg.logging.use_cloud:
                 log_cloud = self._create_ft_cloud_log_data(log_dict, prefix, overall_metrics)
                 self._log_to_cloud(log_cloud)
-
-            torch.distributed.barrier()
 
     @abstractmethod
     def load_checkpoint(self, checkpoint_path: str):
@@ -781,9 +767,6 @@ class AbstractTrainer(ABC):
         pass
     
     def save_checkpoint(self, ds_name: Optional[str] = None, is_milestone: bool = False, **kwargs):
-        if not get_is_master():
-            return
-
         if ds_name is None:
             ds_name = 'unified'
             checkpoint_dir = Path(self.cfg.logging.ckpt_dir, ds_name)
@@ -813,9 +796,7 @@ class AbstractTrainer(ABC):
     def run(self):
         seed_torch(self.cfg.seed)
         logger.info(f"Random seed set to {self.cfg.seed}")
-        self.setup_distributed()
-        logger.info(f"Distributed training setup complete: "
-                    f"rank {self.rank}/{self.world_size}, local rank {self.local_rank}")
+        self.setup_device()
         self.setup_logging()
         self.init_cloud_logging()
 
@@ -835,8 +816,6 @@ class AbstractTrainer(ABC):
 
     def run_unified_training(self):
         """Original unified training loop for multitask or single dataset training."""
-        torch.distributed.barrier()
-
         self.collect_dataset_info(mixed=True)
         model = self.setup_model()
 
@@ -844,8 +823,8 @@ class AbstractTrainer(ABC):
         valid_loaders, _ = self.create_dataloader(datasets.Split.VALIDATION)
         test_loaders, _ = self.create_dataloader(datasets.Split.TEST)
 
-        if not isinstance(train_loader, DataLoader) or not isinstance(train_sampler, DistributedGroupBatchSampler):
-            raise TypeError('train_loader and train_sampler must be of type DataLoader')
+        if not isinstance(train_loader, DataLoader):
+            raise TypeError('train_loader must be of type DataLoader')
 
         # Setup optimizer and scheduler
         self.setup_optimizer_and_scheduler(model, train_loader)
@@ -855,8 +834,6 @@ class AbstractTrainer(ABC):
         # Training loop
         for epoch in range(self.cfg.training.max_epochs):
             self.epoch = epoch
-
-            torch.distributed.barrier()
 
             self.train_epoch(train_loader, train_sampler)
 
@@ -868,22 +845,21 @@ class AbstractTrainer(ABC):
                 self.save_checkpoint()
 
         self.save_checkpoint(is_milestone=True)
+        
+        # Save results to CSV
+        self.save_results_to_csv()
 
         self.finish_cloud_logging()
-        clean_torch_distributed(self.local_rank)
 
         logger.info("Training completed successfully!")
 
     def run_separate_training(self):
         """Main training loop for separate models pattern - train one model per dataset."""
-        torch.distributed.barrier()
-
         logger.info(f"Starting separate models training for {self.num_ds} datasets")
 
         # Train each dataset separately
         for i, (ds_name, ds_config) in enumerate(self.ds_conf.items()):
-            if get_is_master():
-                logger.info(f"Training dataset {i + 1}/{self.num_ds}: {ds_name}")
+            logger.info(f"Training dataset {i + 1}/{self.num_ds}: {ds_name}")
 
             self.collect_dataset_info(mixed=False, ds_name=ds_name)
             model = self.setup_model()
@@ -892,8 +868,8 @@ class AbstractTrainer(ABC):
             valid_loader, _ = self.create_single_dataloader(ds_name, ds_config, datasets.Split.VALIDATION)
             test_loader, _ = self.create_single_dataloader(ds_name, ds_config, datasets.Split.TEST)
 
-            if not isinstance(train_loader, DataLoader) or not isinstance(train_sampler, DistributedGroupBatchSampler):
-                raise TypeError('train_loader and train_sampler must be of type DataLoader')
+            if not isinstance(train_loader, DataLoader):
+                raise TypeError('train_loader must be of type DataLoader')
             if not isinstance(valid_loader, DataLoader):
                 raise TypeError('valid_loader must be of type DataLoader')
             if not isinstance(test_loader, DataLoader):
@@ -909,8 +885,6 @@ class AbstractTrainer(ABC):
             for epoch in range(self.cfg.training.max_epochs):
                 self.epoch = epoch
 
-                torch.distributed.barrier()
-
                 self.train_epoch(train_loader, train_sampler)
 
                 self.eval_epoch([valid_loader], 'eval')
@@ -921,6 +895,12 @@ class AbstractTrainer(ABC):
                     self.save_checkpoint(ds_name=ds_name)
 
             self.save_checkpoint(ds_name, is_milestone=True)
+            
+            # Save results to CSV for this dataset
+            self.save_results_to_csv(ds_name=ds_name)
+            
+            # Clear results history for next dataset
+            self.results_history = []
 
             logger.info(f"Training completed for {ds_name}!")
 
@@ -928,6 +908,5 @@ class AbstractTrainer(ABC):
             self.current_step = 0
 
         self.finish_cloud_logging()
-        clean_torch_distributed(self.local_rank)
         logger.info("Separate models training completed for all datasets!")
 

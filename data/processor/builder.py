@@ -144,8 +144,11 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
             conf.dropout_rate = preproc_args.dropout_rate
             conf.dropout_seed = preproc_args.dropout_seed
 
+        # Only add dropout suffix if it's not already in the name
         if conf.random_dropout:
-            conf.name += f'_dropout_{conf.dropout_rate}_seed_{conf.dropout_seed}'
+            dropout_suffix = f'_dropout_{conf.dropout_rate}_seed_{conf.dropout_seed}'
+            if dropout_suffix not in conf.name:
+                conf.name += dropout_suffix
 
         super().__init__(
             cache_dir=conf.data_path,

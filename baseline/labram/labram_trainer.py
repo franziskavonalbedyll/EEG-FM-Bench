@@ -139,10 +139,6 @@ class LabramTrainer(AbstractTrainer):
         )
         model = model.to(self.device)
 
-        model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[self.local_rank], find_unused_parameters=True
-        )
-
         self.model = model
 
         return model

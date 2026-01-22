@@ -9,8 +9,6 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from datasets import Dataset as HFDataset
 import datasets
-
-from common.distributed.loader import DistributedGroupBatchSampler
 from data.processor.wrapper import load_concat_eeg_datasets, get_dataset_montage
 
 
@@ -210,6 +208,9 @@ class AbstractDataLoaderFactory(ABC):
             dataset_configs=config_names
         )
 
+        # Create a simple sampler for single GPU training
+        # Group samples by montage for efficient batching
+        from common.distributed.loader import DistributedGroupBatchSampler
         sampler = DistributedGroupBatchSampler(
             dataset=combined_dataset,
             batch_size=self.batch_size,
@@ -244,7 +245,7 @@ class AbstractDataLoaderFactory(ABC):
         random_dropout: bool = False,
         dropout_rate: float = 0.0,
         dropout_seed: int = 12,
-    ) -> tuple[Union[list[DataLoader], DataLoader], Union[list[DistributedGroupBatchSampler], DistributedGroupBatchSampler]]:
+    ) -> tuple[Union[list[DataLoader], DataLoader], Union[list, Any]]:
         if mixed:
             return self.loading_dataset(
                 datasets_config=datasets_config,

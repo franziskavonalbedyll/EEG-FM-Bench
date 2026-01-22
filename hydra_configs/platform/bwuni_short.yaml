@@ -11,7 +11,6 @@ hydra:
     dir: ./outputs/preproc/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${name}/seed_${seed}
   launcher:
-    # launcher/cluster specific options
-    partition: "dev_gpu_h100"
-    timeout_min: 30
-    gres: gpu:1
+    partition: "gpu_a100_short"
+    timeout_min: 30 # in minutes, increase for your needs
+    gres: gpu:1 # one gpu allocated

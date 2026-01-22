@@ -144,9 +144,6 @@ class BiotTrainer(AbstractTrainer):
         )
         model = model.to(self.device)
 
-        model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[self.local_rank], find_unused_parameters=True
-        )
         logger.info(f"Model setup complete for {list(self.ds_info.keys())}")
 
         self.model = model
