@@ -1,7 +1,7 @@
 defaults:
   - base
   - eegpt_finetune_workload_base
-  - platform: bwuni_dev
+  - platform: bwuni_short
   - experiment: random_dropout
   - _self_
 
@@ -12,10 +12,9 @@ hydra:
     params:
       experiment.preproc.data_dropout_rate: 0.0 #, 0.1, 0.4, 0.7
       experiment.preproc.data_dropout_seed: 100, 101 #, 102, 103, 104, 105, 106, 107, 108, 109
-      model.embed_dim: 128, 256, 512 
-      training.freeze_encoder: false
-      training.weight_decay: 0.01, 0.05, 0.1 
+      training.freeze_encoder: false, true
       training.max_lr: 1e-4, 3e-5, 1e-5
+
 
 
 # Experiment name
@@ -27,6 +26,10 @@ seed: 1
 training:
   freeze_encoder: false
   max_lr: 3e-5
+  weight_decay: 0.01
+
+model:
+  embed_dim: 512
 
 # Logging configuration
 logging:
@@ -36,3 +39,4 @@ logging:
 
   tags: 
     - dev_run_29_01_2026
+    - grid_search
