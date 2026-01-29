@@ -1,0 +1,3 @@
+name: "mc_dropout"
+params: 
+  data_dropout_rate: 0.3 # How much of the data to drop out. E.g. 0.3 means 30% of the data will be removed

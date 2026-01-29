@@ -1,0 +1,34 @@
+pretrained_path: "./assets/run/ckpt/pretrain/EEGPT/checkpoint/eegpt_mcae_58chs_4s_large4E.ckpt"
+
+# Architecture (keep defaults)
+patch_size: 64
+patch_stride: 32
+embed_num: 4
+embed_dim: 512
+depth: 8
+num_heads: 8
+mlp_ratio: 4.0
+
+# Regularization
+dropout_rate: 0.1
+attn_dropout_rate: 0.1
+drop_path_rate: 0.1
+
+# Initialization
+init_std: 0.02
+qkv_bias: true
+
+# Channel adaptation
+use_channel_conv: false
+conv_chan_dim: 22
+
+# Classification head
+linear_probe1_dim: 16
+linear_probe1_max_norm: 1.0
+linear_probe2_max_norm: 0.25
+head_dropout: 0.1
+
+# Grad-CAM and t-SNE
+grad_cam: false
+t_sne: false
+grad_cam_target: 'channel'

@@ -6,3 +6,5 @@ wandb: True
 
 num_preproc_arrow_writers: 60
 num_preproc_mid_workers: 48
+
+clean_middle_cache: True

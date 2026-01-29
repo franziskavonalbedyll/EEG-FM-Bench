@@ -1,0 +1,30 @@
+defaults:
+  - base
+  - eegpt_finetune_workload_base
+  - platform: local
+  - experiment: random_dropout
+  - _self_
+
+
+# Experiment name
+name: exp_1_eegpt_workload_random_dropout_local
+
+seed: 42
+
+experiment:
+  preproc:
+    data_dropout_rate: 0.8
+
+training:
+  freeze_encoder: false
+  max_lr: 1e-6
+  max_epochs: 1
+
+# Logging configuration
+logging:
+  experiment_name: ${name}
+  output_dir: ./outputs/${name}/random_dropout/ddr_${experiment.preproc.data_dropout_rate}/dds_${seed}/freeze_${training.freeze_encoder}
+  ckpt_dir: ./checkpoints/${name}/random_dropout/ddr_${experiment.preproc.data_dropout_rate}/dds_${seed}/freeze_${training.freeze_encoder}
+
+  tags:
+    - local

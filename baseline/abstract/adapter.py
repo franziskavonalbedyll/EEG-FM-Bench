@@ -9,6 +9,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from datasets import Dataset as HFDataset
 import datasets
+
+from common.distributed.loader import DistributedGroupBatchSampler
 from data.processor.wrapper import load_concat_eeg_datasets, get_dataset_montage
 
 
@@ -156,10 +158,13 @@ class AbstractDatasetAdapter(Dataset, ABC):
 class AbstractDataLoaderFactory(ABC):
     """Abstract factory for creating data loaders."""
     
-    def __init__(self, batch_size: int = 32, num_workers: int = 4, seed: int = 42):
+    def __init__(self, batch_size: int = 32, num_workers: int = 4, seed: int = 42,
+                 exp_name: str = None, exp_config: dict = None):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.seed = seed
+        self.exp_name = exp_name
+        self.exp_config = exp_config
     
     @abstractmethod
     def create_adapter(
@@ -177,9 +182,6 @@ class AbstractDataLoaderFactory(ABC):
         split: datasets.NamedSplit,
         num_replicas: int = 1,
         rank: int = 0,
-        random_dropout: bool = False,
-        dropout_rate: float = 0.0,
-        dropout_seed: int = 12,
     ):
         """Create data loader for training/evaluation.
         
@@ -196,9 +198,8 @@ class AbstractDataLoaderFactory(ABC):
             builder_configs=config_names,
             split=split,
             cast_label=True,
-            random_dropout=random_dropout,
-            dropout_rate=dropout_rate,
-            dropout_seed=dropout_seed,
+            exp_name=self.exp_name,
+            exp_config=self.exp_config,
         )
 
         # Create adapter
@@ -208,9 +209,6 @@ class AbstractDataLoaderFactory(ABC):
             dataset_configs=config_names
         )
 
-        # Create a simple sampler for single GPU training
-        # Group samples by montage for efficient batching
-        from common.distributed.loader import DistributedGroupBatchSampler
         sampler = DistributedGroupBatchSampler(
             dataset=combined_dataset,
             batch_size=self.batch_size,
@@ -242,19 +240,13 @@ class AbstractDataLoaderFactory(ABC):
         num_replicas: int,
         rank: int,
         split: datasets.NamedSplit,
-        random_dropout: bool = False,
-        dropout_rate: float = 0.0,
-        dropout_seed: int = 12,
-    ) -> tuple[Union[list[DataLoader], DataLoader], Union[list, Any]]:
+    ) -> tuple[Union[list[DataLoader], DataLoader], Union[list[DistributedGroupBatchSampler], DistributedGroupBatchSampler]]:
         if mixed:
             return self.loading_dataset(
                 datasets_config=datasets_config,
                 split=split,
                 num_replicas=num_replicas,
                 rank=rank,
-                random_dropout=random_dropout,
-                dropout_rate=dropout_rate,
-                dropout_seed=dropout_seed,
             )
         else:
             dataloaders, samplers = [], []
@@ -263,10 +255,7 @@ class AbstractDataLoaderFactory(ABC):
                     datasets_config={dataset_name: config_name},
                     split=split,
                     num_replicas=num_replicas,
-                    rank=rank,
-                    random_dropout=random_dropout,
-                    dropout_rate=dropout_rate,
-                    dropout_seed=dropout_seed,
+                    rank=rank
                 )
                 dataloaders.append(loader)
                 samplers.append(sampler)

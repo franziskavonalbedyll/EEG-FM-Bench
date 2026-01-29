@@ -100,6 +100,11 @@ class AbstractTrainer(ABC):
         
         # CSV results tracking
         self.results_history = []
+        self.mc_iteration = 1  # Track MC dropout iteration (1 or 2)
+        
+        # Experiment info for dataset loading (set by run_training)
+        self.exp_name: Optional[str] = None
+        self.preproc_exp_config: Optional[dict] = None
 
     
     def setup_device(self):
@@ -157,16 +162,31 @@ class AbstractTrainer(ABC):
                 ])
 
             # Setup wandb configuration with unified parameters
+            tags = self.cfg.logging.tags.copy()
+            tags.extend(self.cfg.data.datasets.keys())
+            tags.extend([
+                self.model_type,
+                self.cfg.multitask and 'multitask' or 'per_dataset',
+            ])
+            tags.extend(
+                [f"{k}_{v}" for k, v in self.cfg.experiment.preproc.items()]
+            )
+            tags.extend(
+                [f"{k}_{v}" for k, v in self.cfg.experiment.training.items()]
+            )
+            tags.append(f"lr_{self.cfg.training.max_lr}")
+          
             wandb_config = {
                 'project': self.cfg.logging.project or self.cfg.logging.experiment_name,
                 'name': (
-                    f"{self.model_type}_{'uni' if self.cfg.multitask else 'sep'}"
-                    f"_dropout_rate_{self.cfg.data.dropout_rate}"
-                    f"_{datetime.datetime.now().strftime('%m%d_%H%M%S')}"
+                    f"{self.model_type}_{'_'.join(list(self.cfg.data.datasets.keys()))}"
+                    f"_{datetime.datetime.now().strftime('%m.%d.%y_%H:%M:%S')}"
                 ),
                 'config': self.cfg.model_dump(),
-                'tags': self.cfg.logging.tags,
+                'tags': tags,
                 'mode': 'offline' if self.cfg.logging.offline else 'online',
+                'job_type': self.cfg.training.freeze_encoder and 'finetune' or 'pretrain',
+                'group': self.cfg.experiment.name if hasattr(self.cfg, 'experiment') else "no_experiment",
             }
 
             # Add optional parameters if specified
@@ -257,42 +277,44 @@ class AbstractTrainer(ABC):
     
     def _store_results_for_csv(self, metrics: Dict[str, float], ds_name: str, prefix: str):
         """Store results for CSV export with descriptive metadata."""
-        # Extract configuration metadata
         result_entry = {
             'timestamp': datetime.datetime.now().isoformat(),
             'model': self.model_type,
             'dataset': ds_name,
             'split': prefix,
             'seed': self.cfg.seed,
+            'learning_rate': self.cfg.training.max_lr,
             'multitask': self.multitask,
+            'experiment': self.cfg.experiment.name if hasattr(self.cfg, 'experiment') else 'N/A',
         }
-        
-        # Add dropout info if available
-        if hasattr(self.cfg.data, 'random_dropout'):
-            result_entry['random_dropout'] = self.cfg.data.random_dropout
-        if hasattr(self.cfg.data, 'dropout_rate'):
-            result_entry['dropout_rate'] = self.cfg.data.dropout_rate
-        if hasattr(self.cfg.data, 'dropout_seed'):
-            result_entry['dropout_seed'] = self.cfg.data.dropout_seed
-        
-        # Add all metrics (strip dataset/prefix from keys)
+
+        # Unpack experiment parameters into individual columns
+        if hasattr(self.cfg, 'experiment'):
+            for section_name in ['preproc', 'finetune']:
+                section = getattr(self.cfg.experiment, section_name, None)
+                if isinstance(section, dict):
+                    for k, v in section.items():
+                        result_entry[f'exp_{k}'] = v
+
+        # Add metrics
         for key, value in metrics.items():
-            # Remove dataset name and prefix from key
             clean_key = key.replace(f'{ds_name}/{prefix}/', '')
             result_entry[clean_key] = value
-        
+
         self.results_history.append(result_entry)
     
     def save_results_to_csv(self, ds_name: Optional[str] = None):
         """Save accumulated results to CSV file with descriptive filename."""
+        from hydra.core.hydra_config import HydraConfig
+        
         if not self.results_history:
             logger.warning("No results to save to CSV")
             return
         
-        # Create results directory
-        results_dir = Path(self.cfg.logging.output_dir) / 'results'
-        results_dir.mkdir(parents=True, exist_ok=True)
-        
+        # Write results to the same directory as Hydra output
+        results_dir = Path(HydraConfig.get().runtime.output_dir)
+        logging.info(f"Saving training results to directory: {results_dir}")
+
         # Build descriptive filename
         filename_parts = [
             self.model_type,
@@ -303,8 +325,6 @@ class AbstractTrainer(ABC):
         elif len(self.ds_conf) == 1:
             filename_parts.append(list(self.ds_conf.keys())[0])
         
-        if hasattr(self.cfg.data, 'dropout_rate'):
-            filename_parts.append(f"dropout_{self.cfg.data.dropout_rate}")
         
         filename_parts.append(f"seed_{self.cfg.seed}")
         filename_parts.append(self.start_time.strftime("%Y%m%d_%H%M%S"))
@@ -423,6 +443,12 @@ class AbstractTrainer(ABC):
         pred_np = torch.argmax(logits, dim=-1).numpy()
 
         n_class = self.ds_info[ds_name]['n_class']
+        
+        # Debug: log prediction distribution
+        import numpy as np
+        unique_preds, pred_counts = np.unique(pred_np, return_counts=True)
+        unique_labels, label_counts = np.unique(label_np, return_counts=True)
+        logger.info(f"DEBUG {prefix} - Predictions: {dict(zip(unique_preds, pred_counts))}, Labels: {dict(zip(unique_labels, label_counts))}")
 
         metrics = {
             f'{ds_name}/{prefix}/epoch': self.epoch,
@@ -507,6 +533,10 @@ class AbstractTrainer(ABC):
         logger.info("Creating main training dataloader...")
         mixed = (split == datasets.Split.TRAIN and self.cfg.multitask)
 
+        # Set experiment info on factory for dataset loading
+        self.dataloader_factory.exp_name = self.exp_name
+        self.dataloader_factory.exp_config = self.preproc_exp_config
+
         dataloaders, samplers = self.dataloader_factory.create_dataloader(
             datasets_config=self.ds_conf,
             mixed=mixed,
@@ -523,15 +553,16 @@ class AbstractTrainer(ABC):
     def create_single_dataloader(self, ds_name: str, ds_config: str, split: datasets.NamedSplit = datasets.Split.TRAIN):
         logger.info("Creating single main training dataloader...")
 
+        # Set experiment info on factory for dataset loading
+        self.dataloader_factory.exp_name = self.exp_name
+        self.dataloader_factory.exp_config = self.preproc_exp_config
+
         dataloader, sampler = self.dataloader_factory.create_dataloader(
             datasets_config={ds_name: ds_config},
             mixed=False,
             num_replicas=1,
             rank=0,
             split=split,
-            random_dropout=self.cfg.data.random_dropout,
-            dropout_rate=self.cfg.data.dropout_rate,
-            dropout_seed=self.cfg.data.dropout_seed,
         )
 
         dataloader = dataloader[0]
@@ -582,6 +613,9 @@ class AbstractTrainer(ABC):
         # Learning rate scheduler
         warmup_steps = len(train_loader) * self.cfg.training.warmup_epochs
         total_steps = len(train_loader) * self.cfg.training.max_epochs
+        print("Total steps:", total_steps)
+        if total_steps == 5:
+            logger.warning("Total training steps is only 5, which will crash OneCycleLR due to being low. Decrease data dropout rate.")
 
         if self.cfg.training.lr_schedule == 'onecycle':
             scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -853,7 +887,7 @@ class AbstractTrainer(ABC):
 
         logger.info("Training completed successfully!")
 
-    def run_separate_training(self):
+    def run_separate_training(self, mc_dropout_pruning: bool = False, mc_prune_ratio: float = 0.4):
         """Main training loop for separate models pattern - train one model per dataset."""
         logger.info(f"Starting separate models training for {self.num_ds} datasets")
 
@@ -867,6 +901,8 @@ class AbstractTrainer(ABC):
             train_loader, train_sampler = self.create_single_dataloader(ds_name, ds_config, datasets.Split.TRAIN)
             valid_loader, _ = self.create_single_dataloader(ds_name, ds_config, datasets.Split.VALIDATION)
             test_loader, _ = self.create_single_dataloader(ds_name, ds_config, datasets.Split.TEST)
+
+            print(len(train_loader.dataset))
 
             if not isinstance(train_loader, DataLoader):
                 raise TypeError('train_loader must be of type DataLoader')
@@ -895,6 +931,40 @@ class AbstractTrainer(ABC):
                     self.save_checkpoint(ds_name=ds_name)
 
             self.save_checkpoint(ds_name, is_milestone=True)
+
+            if mc_dropout_pruning:
+                logger.info(f"Computing MC Dropout scores for {ds_name}...")
+                score_dict = self.compute_mc_dropout_scores(train_loader, ds_name)
+
+                # ---- STEP 3: PRUNE DATASET ----
+                scores = pd.Series(score_dict)
+                threshold = scores.quantile(1.0 - mc_prune_ratio)
+                bad_ids = set(scores[scores >= threshold].index)
+
+                logger.info(f"Pruning {len(bad_ids)} samples from {ds_name}")
+
+                # Get HF dataset and prune it
+                dataset = self.dataloader_factory.datasets[ds_name]["train"]
+                pruned_dataset = dataset.filter(lambda x: x["sample_id"] not in bad_ids)
+
+                # Rebuild dataloader from pruned dataset
+                train_loader, train_sampler = self.dataloader_factory.create_dataloader_from_dataset(
+                    pruned_dataset,
+                    split=datasets.Split.TRAIN,
+                )
+
+                # ---- STEP 4: RETRAIN FROM SCRATCH ----
+                self.epoch = 0
+                self.current_step = 0
+                self.model = self.setup_model()
+                self.setup_optimizer_and_scheduler(self.model, train_loader)
+
+                logger.info(f"Retraining {ds_name} on pruned dataset...")
+                for epoch in range(self.cfg.training.max_epochs):
+                    self.epoch = epoch
+                    self.train_epoch(train_loader, train_sampler)
+                    self.eval_epoch([valid_loader], 'eval')
+                    self.eval_epoch([test_loader], 'test')
             
             # Save results to CSV for this dataset
             self.save_results_to_csv(ds_name=ds_name)
@@ -909,4 +979,40 @@ class AbstractTrainer(ABC):
 
         self.finish_cloud_logging()
         logger.info("Separate models training completed for all datasets!")
+
+    def _enable_dropout_only(self):
+        """Enable dropout layers during inference."""
+        for m in self.model.modules():
+            if isinstance(m, torch.nn.Dropout):
+                m.train()
+
+    @torch.no_grad()
+    def compute_mc_dropout_scores(
+        self,
+        dataloader: DataLoader,
+        ds_name: str,
+        mc_samples: int = 50,
+    ):
+        self.model.eval()
+        self._enable_dropout_only()
+
+        scores = {}
+        
+        for batch in dataloader:
+            batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            sample_ids = batch["sample_id"]  # list[str]
+
+            probs_mc = []
+            for _ in range(mc_samples):
+                logits = self.model(batch)
+                probs = torch.softmax(logits, dim=1)
+                probs_mc.append(probs.max(dim=1).values)
+
+            probs_mc = torch.stack(probs_mc, dim=0)
+            uncertainty = (probs_mc - probs_mc.pow(2)).mean(dim=0)
+
+            for sid, u in zip(sample_ids, uncertainty):
+                scores[sid] = u.item()
+
+        return scores
 

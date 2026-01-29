@@ -6,9 +6,9 @@ defaults:
 hydra:
   mode: MULTIRUN  # needed for launcher to be used
   run:
-    dir: ./outputs/preproc/${now:%Y-%m-%d}/${now:%H-%M-%S}/${name}
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}/${name}
   sweep:
-    dir: ./outputs/preproc/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${name}/seed_${seed}
   launcher:
     partition: "gpu_a100_short"

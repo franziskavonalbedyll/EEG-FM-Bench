@@ -2,7 +2,7 @@
 
 hydra:
   run:
-    dir: ./outputs/preproc/${now:%Y-%m-%d}/${now:%H-%M-%S}/${name}
+    dir: ./outputs/local/${now:%Y-%m-%d}/${now:%H-%M-%S}/${name}
   sweep:
-    dir: ./outputs/preproc/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ./outputs/local/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${name}/seed_${seed}

@@ -119,25 +119,15 @@ def load_concat_eeg_datasets(
         weight_option: str = 'statistics',
         add_ds_name: bool = False,
         cast_label: bool = False,
-        random_dropout: bool = False,
-        dropout_rate: float = 0.0,
-        dropout_seed: int = 12,
+        exp_name: str = None,
+        exp_config: dict = None,
 ) -> tuple[Dataset, list[Tensor]]:
     dataset_list = []
     weight_list = []
-    
-    # Create PreprocArgs for passing dropout parameters
-    from common.config import PreprocArgs
-    preproc_args = PreprocArgs(
-        random_dropout=random_dropout,
-        dropout_rate=dropout_rate,
-        dropout_seed=dropout_seed
-    )
-    
     for ds_name, ds_config in zip(dataset_names, builder_configs):
         try:
             builder_cls = DATASET_SELECTOR[ds_name]
-            builder = builder_cls(config_name=ds_config, preproc_args=preproc_args)
+            builder = builder_cls(config_name=ds_config, exp_name=exp_name, exp_config=exp_config)
             # noinspection PyTypeChecker
             dataset: Dataset = builder.as_dataset(split=split)
             if add_ds_name:
@@ -183,5 +173,4 @@ if __name__ == '__main__':
 
     for batch in loader:
         pass
-
 

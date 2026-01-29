@@ -6,28 +6,19 @@ from abc import ABC, abstractmethod
 from typing import Dict, Optional, List
 from pydantic import BaseModel, Field
 
+
 class PreprocArgs(BaseModel):
     clean_middle_cache: bool = False
     num_preproc_arrow_writers: int = 4
     num_preproc_mid_workers: int = 6
     pretrain_datasets: list[str] = Field(default_factory=lambda: [])
     finetune_datasets: dict[str, str] = Field(default_factory=lambda: {})
-    random_dropout: bool = False
-    dropout_rate: float = 0.0
-    dropout_seed: int = 12
-
 
 class BaseDataArgs(BaseModel):
     """Base data configuration."""
     datasets: Dict[str, str] = Field(default_factory=lambda: {})
     batch_size: int = 32
     num_workers: int = 2
-    
-    # Dropout parameters for data curation
-    random_dropout: bool = False
-    dropout_rate: float = 0.0
-    dropout_seed: int = 12
-
 
 class BaseModelArgs(BaseModel):
     """Base model configuration."""
@@ -54,6 +45,7 @@ class BaseTrainingArgs(BaseModel):
     use_amp: bool = True
     freeze_encoder: bool = True
 
+    experiment_params: Dict[str, Optional[float]] = Field(default_factory=lambda: {})
 
 class BaseLoggingArgs(BaseModel):
     """Base logging configuration."""
@@ -73,6 +65,11 @@ class BaseLoggingArgs(BaseModel):
     log_step_interval: int = 1
     ckpt_interval: int = 1
 
+class BaseExperimentArgs(BaseModel):
+    """Base experiment configuration."""
+    name: str = ""
+    preproc: Dict[str, Optional[float]] = Field(default_factory=lambda: {})
+    training: Dict[str, Optional[float]] = Field(default_factory=lambda: {})
 
 class AbstractConfig(BaseModel, ABC):
     """Abstract base configuration class for all baseline models."""
@@ -87,6 +84,7 @@ class AbstractConfig(BaseModel, ABC):
     model: BaseModelArgs = Field(default_factory=BaseModelArgs)
     training: BaseTrainingArgs = Field(default_factory=BaseTrainingArgs)
     logging: BaseLoggingArgs = Field(default_factory=BaseLoggingArgs)
+    experiment: BaseExperimentArgs = Field(default_factory=BaseExperimentArgs)
 
     @abstractmethod
     def validate_config(self) -> bool:

@@ -1,5 +1,6 @@
 defaults:
   - eegpt_finetune_workload_base
+  - datasets/finetune/workload
   - training: full_finetune
   - platform: bwuni_dev
   - _self_

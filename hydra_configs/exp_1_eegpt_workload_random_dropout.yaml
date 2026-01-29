@@ -1,8 +1,8 @@
 defaults:
   - base
-  - models: eegpt
-  - training: full_finetune
+  - eegpt_finetune_workload_base
   - platform: bwuni_dev
+  - experiment: random_dropout
   - _self_
 
 # Enable Hydra multirun for sweeping
@@ -10,43 +10,29 @@ hydra:
   mode: MULTIRUN
   sweeper:
     params:
-      dropout_rate: 0.3 #, 0.1 #, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0
-      seed: 1 # 2 #, 3, 4, 5, 6, 7, 8, 9, 10
+      experiment.preproc.data_dropout_rate: 0.0 #, 0.1, 0.4, 0.7
+      experiment.preproc.data_dropout_seed: 100, 101 #, 102, 103, 104, 105, 106, 107, 108, 109
+      model.embed_dim: 128, 256, 512 
+      training.freeze_encoder: false
+      training.weight_decay: 0.01, 0.05, 0.1 
+      training.max_lr: 1e-4, 3e-5, 1e-5
+
 
 # Experiment name
 name: exp_1_eegpt_workload_random_dropout_sweep
 
-# Training configuration
-model_type: 'eegpt'
-multitask: false
-master_port: 51002
-
 # Seed parameter
 seed: 1
 
-# Dropout parameters (swept by Hydra)
-random_dropout: true
-dropout_rate: 0.1  # Will be overridden by Hydra sweep
-dropout_seed: ${seed}
-
-# Data configuration
-data:
-  batch_size: 32
-  num_workers: 1
-  datasets:
-    workload: 'finetune'
-  random_dropout: ${random_dropout}
-  dropout_rate: ${dropout_rate}
-  dropout_seed: ${dropout_seed}
+training:
+  freeze_encoder: false
+  max_lr: 3e-5
 
 # Logging configuration
 logging:
-  experiment_name: ${name}_dropout_${dropout_rate}_seed_${seed}
-  output_dir: ./outputs/${name}/full_finetune/random_dropout/${dropout_rate}/seed_${seed}
-  ckpt_dir: ./checkpoints/${name}/full_finetune/random_dropout/${dropout_rate}/seed_${seed}
+  experiment_name: ${name}
+  output_dir: ./outputs/${name}/random_dropout/ddr_${experiment.preproc.data_dropout_rate}/dds_${seed}/freeze_${training.freeze_encoder}
+  ckpt_dir: ./checkpoints/${name}/random_dropout/ddr_${experiment.preproc.data_dropout_rate}/dds_${seed}/freeze_${training.freeze_encoder}
 
-  tags:
-    - eegpt
-    - workload
-    - random_dropout_sweep
-    - dropout_${dropout_rate}
+  tags: 
+    - dev_run_29_01_2026

@@ -4,7 +4,7 @@ from typing import Type
 from omegaconf import DictConfig, OmegaConf
 import hydra
 
-from common.config import PreprocArgs
+from common.config import PreprocArgs, BaseExperimentArgs
 from common.log import setup_log
 from common.path import get_conf_file_path
 from data.processor.builder import EEGDatasetBuilder
@@ -18,23 +18,26 @@ def prepare_dataset(
         conf: PreprocArgs,
         builder_cls: Type[EEGDatasetBuilder],
         dataset_name: str,
-        config_name: str
+        config_name: str,
+        exp_name: str = None,
+        exp_config: BaseExperimentArgs = None,
 ):
-    # try:
-    logger.info(f"Preparing dataset {dataset_name} {config_name}...")
-    builder = builder_cls(config_name, preproc_args=conf)
-    if conf.clean_middle_cache:
-        builder.clean_disk_cache()
-    builder.preproc(n_proc=conf.num_preproc_mid_workers)
-    builder.download_and_prepare(num_proc=conf.num_preproc_arrow_writers)
-    dataset = builder.as_dataset()
-    logger.info(f"Dataset {dataset_name} {config_name} is prepared.")
-    logger.info(f"{dataset}")
-    # except Exception as e:
-    #     logger.error(f"Preparation of dataset {dataset_name} {config_name} exit with error: {e}.")
+    try:
+        logger.info(f"Preparing dataset {dataset_name} {config_name}...")
+        builder = builder_cls(config_name, exp_name=exp_name, exp_config=exp_config)
+        if conf.clean_middle_cache:
+            builder.clean_disk_cache()
+        builder.preproc(n_proc=conf.num_preproc_mid_workers)
+        builder.download_and_prepare(num_proc=conf.num_preproc_arrow_writers)
+        dataset = builder.as_dataset()
+        logger.info(f"Dataset {dataset_name} {config_name} is prepared.")
+        logger.info(f"{dataset}")
+    except Exception as e:
+        logger.error(f"Preparation of dataset {dataset_name} {config_name} exit with error: {e}.")
+        raise e
 
 
-def preproc(conf: PreprocArgs):
+def preproc(conf: PreprocArgs, exp_name: str = None, exp_config: BaseExperimentArgs = None):
     dataset_names = conf.pretrain_datasets
     dataset_configs = ['pretrain' for _ in dataset_names]
     dataset_names.extend(conf.finetune_datasets.keys())
@@ -48,7 +51,8 @@ def preproc(conf: PreprocArgs):
         if config not in builder_cls.builder_configs.keys():
             raise ValueError(f"Config {config} is not supported for dataset {dataset}.")
 
-        prepare_dataset(conf, builder_cls, dataset, config)
+        prepare_dataset(conf, builder_cls, dataset, config, exp_name=exp_name, exp_config=exp_config)
+
 
 
 @hydra.main(config_path="hydra_configs", config_name="config", version_base=None)

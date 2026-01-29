@@ -6,7 +6,7 @@ import os
 import shutil
 import warnings
 from abc import ABC
-from dataclasses import dataclass,  field
+from dataclasses import dataclass,  field, replace
 from typing import Optional, Union, Any
 
 
@@ -26,7 +26,7 @@ from omegaconf import OmegaConf
 from pandas import DataFrame
 from tqdm import tqdm
 
-from common.config import PreprocArgs
+from common.config import PreprocArgs, BaseExperimentArgs
 from common.log import setup_log
 from common.path import CONF_ROOT, DATABASE_CACHE_ROOT, DATABASE_PROC_ROOT, DATABASE_RAW_ROOT, LOG_ROOT, PLATFORM
 from common.type import DatasetTaskType
@@ -34,7 +34,6 @@ from common.utils import ElectrodeSet
 
 
 logger = logging.getLogger('preproc')
-
 
 @dataclass
 class EEGConfig(BuilderConfig):
@@ -53,11 +52,6 @@ class EEGConfig(BuilderConfig):
     filter_notch: float = 50.0
     fs: float = 256.0
     unit: str = "uV"
-
-    # random dropout conf
-    random_dropout: bool = False
-    dropout_rate: float = 0.0
-    dropout_seed: int = 12
 
     # middle cache storage
     mid_batch_size: int = 1e3
@@ -136,24 +130,21 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
         BUILDER_CONFIG_CLASS(name='pretrain'),
         BUILDER_CONFIG_CLASS(name='finetune', is_finetune=True),]
 
-    def __init__(self, config_name='pretrain', preproc_args: PreprocArgs | None = None, **kwargs):
-        self.preproc_args = preproc_args
+    def __init__(self, config_name='pretrain', exp_name: str = None, exp_config: BaseExperimentArgs = None, **kwargs):
         conf: EEGConfig = self.builder_configs.get(config_name)
-        if preproc_args is not None:
-            conf.random_dropout = preproc_args.random_dropout
-            conf.dropout_rate = preproc_args.dropout_rate
-            conf.dropout_seed = preproc_args.dropout_seed
+        self.exp_config = exp_config if exp_config else None
+        self.exp_name: str = exp_name if exp_name is not None else ""
+        
+        self.dataset_id = create_dataset_id(conf, self.exp_name, self.exp_config)
+        logger.info(f'Created dataset ID: {self.dataset_id}')
 
-        # Only add dropout suffix if it's not already in the name
-        if conf.random_dropout:
-            dropout_suffix = f'_dropout_{conf.dropout_rate}_seed_{conf.dropout_seed}'
-            if dropout_suffix not in conf.name:
-                conf.name += dropout_suffix
-
+        # Include dataset_id in hash to ensure HuggingFace datasets library
+        # creates separate Arrow cache for different experiment configs
         super().__init__(
             cache_dir=conf.data_path,
             dataset_name=conf.dataset_name,
             config_name=config_name,
+            hash=self.dataset_id,
             writer_batch_size=conf.writer_batch_size,
             **kwargs
         )
@@ -191,6 +182,7 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
     # GeneratorBasedBuilder Methods
     def _info(self) -> datasets.DatasetInfo:
         feat_dict = {
+            "sample_id": datasets.Value("string"),
             "data": datasets.Sequence(datasets.Sequence(datasets.Value("float32"))),
             "chs": datasets.Sequence(datasets.Value("int32")),
             "task": datasets.Value("int32"),
@@ -249,7 +241,7 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
             splits: list[str] = kwargs['split']
             fs = s3fs.S3FileSystem(**self.s3_conf) if self.config.is_remote_fs else None
             for file, split in zip(keys, splits):
-                file_path = os.path.join(self.config.mid_path, self.config.name, split, file)
+                file_path = os.path.join(self.config.mid_path, self.dataset_id, split, file)
                 with (
                         fs.open(file_path, 'rb') if fs
                         else open(file_path, 'rb')  # 本地回退
@@ -262,6 +254,7 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
                         row['chs'] = np.array(row['chs'], dtype=np.int32)
                         row['data'] = np.array(row['data'], dtype=np.float32).reshape(len(row['chs']), -1)
                         key = file + f'_{idx}'
+                        row["sample_id"] = key
                         yield key, row
         except Exception as e:
             logger.error(f"Error generating examples: {str(e)}")
@@ -296,9 +289,19 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
         os.makedirs(self.summary_path, exist_ok=True)
         if self.config.is_remote_fs:
             return
-        os.makedirs(self.config.mid_path, exist_ok=True)
+
+        dataset_dir = os.path.join(self.config.mid_path, self.dataset_id)
+        os.makedirs(dataset_dir, exist_ok=True)
+
+        # persist experiment config with the cache
+        if self.exp_config is not None:
+            OmegaConf.save(
+                OmegaConf.create(self.exp_config),
+                os.path.join(dataset_dir, "experiment.yaml"),
+            )
+
         for split in ['train', 'valid', 'test'] if self.config.is_finetune else ['train', 'valid']:
-            os.makedirs(os.path.join(self.config.mid_path, self.config.name, split), exist_ok=True)
+            os.makedirs(os.path.join(dataset_dir, split), exist_ok=True)
 
     # noinspection PyUnusedLocal
     def _s3_link_test(self, data):
@@ -345,10 +348,10 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
     def clean_arrow_set(self):
         try:
             if not self.config.data_path.startswith('s3://'):
-                shutil.rmtree(os.path.join(self.config.data_path, self.config.dataset_name, self.config.name), ignore_errors=True)
+                shutil.rmtree(os.path.join(self.config.data_path, self.config.dataset_name, self.dataset_id), ignore_errors=True)
             else:
                 pass
-                # self._rm_s3_path(os.path.join(self.config.data_path, self.config.dataset_name, self.config.name), n_proc=self.config.s3_delete_worker)
+                # self._rm_s3_path(os.path.join(self.config.data_path, self.config.dataset_name, self.dataset_id), n_proc=self.config.s3_delete_worker)
             logger.info(f'{self.config.dataset_name} arrow set cleared.')
         except Exception as e:
             logger.error(f'Error occurred during clean arrow dataset: {e}')
@@ -358,7 +361,7 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
         try:
             shutil.rmtree(self.summary_path, ignore_errors=True)
             if not self.config.is_remote_fs:
-                shutil.rmtree(os.path.join(self.config.mid_path, self.config.name), ignore_errors=True)
+                shutil.rmtree(os.path.join(self.config.mid_path, self.dataset_id), ignore_errors=True)
             else:
                 pass
                 # self._rm_s3_path(self.config.mid_path, n_proc=self.config.s3_delete_worker)
@@ -386,9 +389,9 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
     def _build_output_dir(self, split: str, filename: str):
         base_path: str = self.config.mid_path
         if self.config.is_remote_fs:
-            return f"{base_path.rstrip('/')}/{self.config.name}/{split}/{filename}"
+            return f"{base_path.rstrip('/')}/{self.dataset_id}/{split}/{filename}"
         # logger.info(f'{base_path} {self.config.name} {split} {filename}')
-        return os.path.join(base_path, self.config.name, split, filename)
+        return os.path.join(base_path, self.dataset_id, split, filename)
 
     def _persist_example_file(self, sample: dict):
         # pretrain datasets have no ground truth will be assigned a label item which indicates all signal array
@@ -403,9 +406,12 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
 
                 examples = self._generate_window_sample(raw, montage, chs_idx, label, self.config.persist_drop_last)
                 
-                if split == "train" and self.config.random_dropout and self.config.dropout_rate > 0.0:
+                # Only apply dropout to training data, not validation/test
+                if self.exp_config is not None and self.exp_name == "random_dropout" and split == "train":
                     logger.info(f'Applying random dropout to file: {path}')
-                    examples = self._apply_random_dropout(examples, self.config.dropout_rate, self.config.dropout_seed)
+                    examples = self._apply_random_dropout(
+                        examples, self.exp_config["data_dropout_rate"], self.exp_config["data_dropout_seed"]
+                    )
                 
                 if len(examples) < 1:
                     return None
@@ -440,13 +446,13 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
             'cnt': [len(examples)],})
         return mid_df
     
-    def _apply_random_dropout(self, examples, dropout_rate: float, dropout_seed: int) -> dict:
+    def _apply_random_dropout(self, examples, data_dropout_rate: float, data_dropout_seed: int) -> dict:
         """Apply random dropout to the data based on the config settings."""
         
-        logger.info(f'Applying random dropout with rate {dropout_rate} and seed {dropout_seed}')
+        logger.info(f'Applying random dropout with rate {data_dropout_rate} and seed {data_dropout_seed}')
         
-        rng = np.random.default_rng(dropout_seed)
-        keep = rng.random(len(examples)) >= dropout_rate
+        rng = np.random.default_rng(data_dropout_seed)
+        keep = rng.random(len(examples)) >= data_dropout_rate
         examples = [ex for ex, k in zip(examples, keep) if k]
 
         logger.info(f"Removed {len(keep) - len(examples)} samples due to random dropout.")
@@ -539,12 +545,11 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
         return wnds
 
     def _mark_preproc_done(self):
-        with open(os.path.join(self.summary_path, f'{self.config.name}.done'), 'w'):
+        with open(os.path.join(self.summary_path, f'{self.dataset_id}.done'), 'w'):
             pass
 
     def _is_preproc_cached(self):
-        return os.path.exists(os.path.join(self.summary_path, f'{self.config.name}.done'))
-
+        return os.path.exists(os.path.join(self.summary_path, f'{self.dataset_id}.done'))
     def _walk_raw_data_files(self):
         logger.info('Walking eeg data files...')
         scan_path = os.path.join(self.config.raw_path, self.config.scan_sub_dir)
@@ -1021,6 +1026,19 @@ class EEGDatasetBuilder(datasets.GeneratorBasedBuilder, ABC):
     @staticmethod
     def _encode_path(file_path: str):
         return hashlib.sha512(file_path.encode()).hexdigest()
+
+
+def create_dataset_id(conf: EEGConfig, exp_name: str = None, exp_config: BaseExperimentArgs = None) -> str:
+    key = {
+        "name": conf.name,
+        "exp_name": exp_name,
+        "exp_conf": exp_config,
+        "filter_low": conf.filter_low,
+        "filter_high": conf.filter_high,
+        "filter_notch": conf.filter_notch,
+    }
+    return hashlib.sha1(json.dumps(key, sort_keys=True).encode()).hexdigest()[:10]
+
 
 if __name__ == "__main__":
     pass

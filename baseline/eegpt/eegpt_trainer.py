@@ -61,7 +61,9 @@ class EegptTrainer(AbstractTrainer):
         self.dataloader_factory = EegptDataLoaderFactory(
             batch_size=self.cfg.data.batch_size,
             num_workers=self.cfg.data.num_workers,
-            seed=self.cfg.seed
+            seed=self.cfg.seed,
+            exp_name=self.cfg.experiment.name if self.cfg.experiment else None,
+            exp_config=self.cfg.experiment.preproc if self.cfg.experiment else None,
         )
         
         # Model components
